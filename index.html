@@ -363,9 +363,8 @@
         </div>
     </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-  // --- 1. Supabase config (keep your values here) ---
+  // --- 1. Supabase config ---
   const SUPABASE_URL = 'https://tkrzcavogrsyprqtdhcn.supabase.co';
   const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRrcnpjYXZvZ3JzeXBycXRkaGNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk3NjU4MDMsImV4cCI6MjA3NTM0MTgwM30.7rlQslZj-U9EuX2iDhc3NShCPFIH4BCRyQT2BUqZ3c0';
 
@@ -373,13 +372,13 @@
     auth: {
       autoRefreshToken: true,
       persistSession: true,
-      detectSessionInUrl: true,     // let supabase-js read #access_token from URL
-      flowType: 'implicit',         // we DON'T need PKCE for password reset
+      detectSessionInUrl: false,   // we'll handle code ourselves
+      flowType: 'pkce',            // important: PKCE flow
       storage: window.localStorage
     }
   });
 
-  // --- 2. UI helpers (unchanged) ---
+  // --- UI helpers (same as before) ---
   function togglePassword(inputId, toggleId) {
     const input = document.getElementById(inputId);
     const toggle = document.getElementById(toggleId);
@@ -422,23 +421,12 @@
     errorEl.classList.add('show');
   }
 
-  // --- 3. Password validation (same logic) ---
   function validatePassword(password) {
-    if (!password || password.length === 0) {
-      return 'Password is required';
-    }
-    if (password.length < 8) {
-      return 'Password must be at least 8 characters long';
-    }
-    if (!/[A-Z]/.test(password)) {
-      return 'Password must contain at least one uppercase letter';
-    }
-    if (!/[a-z]/.test(password)) {
-      return 'Password must contain at least one lowercase letter';
-    }
-    if (!/[0-9]/.test(password)) {
-      return 'Password must contain at least one number';
-    }
+    if (!password || password.length === 0) return 'Password is required';
+    if (password.length < 8) return 'Password must be at least 8 characters long';
+    if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter';
+    if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter';
+    if (!/[0-9]/.test(password)) return 'Password must contain at least one number';
     if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
       return 'Password must contain at least one special character (!@#$%^&*)';
     }
@@ -454,7 +442,7 @@
     }, 2000);
   }
 
-  // --- 4. On load: verify session from reset link ---
+  // --- 2. On load: handle PKCE code and init session ---
   window.addEventListener('load', async () => {
     const loading = document.getElementById('loading');
     const form = document.getElementById('resetForm');
@@ -462,19 +450,43 @@
     loading.classList.add('show');
 
     try {
-      // This will ALSO cause supabase-js to parse #access_token from URL
-      const { data: { session }, error } = await supabase.auth.getSession();
+      const url = new URL(window.location.href);
+      const code = url.searchParams.get('code');
+      const type = url.searchParams.get('type');
+
+      // If Supabase redirected here with a PKCE code, exchange it for a session
+      if (code && type === 'recovery') {
+        console.log('Found PKCE code, exchanging for session...');
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+
+        if (error) {
+          console.error('exchangeCodeForSession error:', error);
+          throw new Error(
+            error.message?.includes('expired')
+              ? 'This password reset link has expired. Please request a new one.'
+              : 'Failed to verify reset code. Please request a new password reset.'
+          );
+        }
+
+        // Clean code/type from URL
+        url.searchParams.delete('code');
+        url.searchParams.delete('type');
+        window.history.replaceState(null, '', url.toString());
+      }
+
+      // Now we should have a session
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
       loading.classList.remove('show');
 
-      if (error) {
-        console.error('getSession error:', error);
+      if (sessionError) {
+        console.error('getSession error:', sessionError);
         showError('Failed to verify reset link. Please request a new password reset.');
         return;
       }
 
       if (!session || !session.user) {
-        console.warn('No session from reset link');
+        console.warn('No valid session after code exchange');
         showError('This password reset link is invalid or has expired. Please request a new reset email.');
         return;
       }
@@ -484,11 +496,11 @@
     } catch (err) {
       console.error('Session init error:', err);
       loading.classList.remove('show');
-      showError('Failed to verify reset link. Please request a new password reset.');
+      showError(err.message || 'Failed to verify reset link. Please request a new password reset.');
     }
   });
 
-  // --- 5. Handle form submit (same idea, cleaner) ---
+  // --- 3. Handle form submit ---
   document.getElementById('resetForm').addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -515,14 +527,12 @@
     document.getElementById('loading').classList.add('show');
 
     try {
-      // Double-check we still have a user
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) {
         throw new Error('Password reset session is no longer valid. Please request a new reset email.');
       }
 
       const { error } = await supabase.auth.updateUser({ password: newPassword });
-
       if (error) throw error;
 
       await supabase.auth.signOut();
@@ -547,5 +557,6 @@
 </script>
 </body>
 </html>
+
 
 
