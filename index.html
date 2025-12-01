@@ -400,9 +400,10 @@
             supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
                 auth: {
                     autoRefreshToken: false,
-                    persistSession: false,
+                    persistSession: true, // Changed to true to allow session persistence
                     detectSessionInUrl: true,
-                    flowType: 'pkce'
+                    flowType: 'pkce',
+                    storage: window.localStorage // Use localStorage for session
                 }
             });
             
@@ -410,21 +411,50 @@
             console.log('Supabase client initialized');
             console.log('Current URL:', window.location.href);
             console.log('URL Hash:', window.location.hash);
+            console.log('URL Search:', window.location.search);
+            
+            // Listen for auth state changes (Supabase might auto-authenticate)
+            supabase.auth.onAuthStateChange((event, session) => {
+                console.log('Auth state changed:', event, session?.user?.email);
+                if (event === 'SIGNED_IN' && session) {
+                    // User was automatically signed in
+                    console.log('User auto-signed in via recovery token');
+                }
+            });
         } else {
             showError('Supabase configuration missing. Please contact support.');
             document.getElementById('resetForm').style.display = 'none';
             document.getElementById('loading').classList.remove('show');
         }
         
-        // Extract token from URL hash
-        function extractTokenFromHash() {
+        // Extract token from URL (both hash and query parameters)
+        function extractTokenFromUrl() {
+            // Try hash first (Supabase typically uses hash for OAuth flows)
             const hash = window.location.hash.substring(1);
-            if (!hash) return null;
+            const hashParams = hash ? new URLSearchParams(hash) : null;
             
-            const params = new URLSearchParams(hash);
-            const accessToken = params.get('access_token');
-            const refreshToken = params.get('refresh_token');
-            const type = params.get('type');
+            // Try query parameters (some flows use query params)
+            const queryParams = new URLSearchParams(window.location.search);
+            
+            // Check hash first, then query params
+            const accessToken = hashParams?.get('access_token') || queryParams.get('access_token') || queryParams.get('token');
+            const refreshToken = hashParams?.get('refresh_token') || queryParams.get('refresh_token');
+            const type = hashParams?.get('type') || queryParams.get('type') || 'recovery';
+            
+            // Also check for token in the full URL (Supabase might include it differently)
+            if (!accessToken) {
+                const fullUrl = window.location.href;
+                const tokenMatch = fullUrl.match(/[?&#](?:access_token|token)=([^&]+)/);
+                if (tokenMatch) {
+                    return {
+                        accessToken: decodeURIComponent(tokenMatch[1]),
+                        refreshToken: refreshToken || '',
+                        type: type
+                    };
+                }
+            }
+            
+            if (!accessToken) return null;
             
             return { accessToken, refreshToken, type };
         }
@@ -436,32 +466,44 @@
             }
             
             try {
-                // Extract token from URL hash (Supabase includes it when redirecting)
-                const tokenData = extractTokenFromHash();
+                // Log current URL for debugging
+                console.log('Current URL:', window.location.href);
+                console.log('URL Hash:', window.location.hash);
+                console.log('URL Search:', window.location.search);
+                
+                // First, let Supabase try to detect the session automatically
+                // This handles the case where Supabase has already processed the URL
+                const { data: { session: autoSession }, error: autoSessionError } = await supabase.auth.getSession();
+                
+                if (autoSession && autoSession.user) {
+                    console.log('Session auto-detected by Supabase');
+                    return true;
+                }
+                
+                // If no auto session, try to extract token manually
+                const tokenData = extractTokenFromUrl();
                 
                 console.log('Token data extracted:', { 
                     hasAccessToken: !!tokenData?.accessToken, 
-                    type: tokenData?.type 
+                    type: tokenData?.type,
+                    urlHash: window.location.hash,
+                    urlSearch: window.location.search
                 });
                 
                 if (!tokenData || !tokenData.accessToken) {
-                    // Try to get existing session (might already be set)
-                    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-                    console.log('Existing session check:', { hasSession: !!session, error: sessionError });
-                    
-                    if (session && session.user) {
-                        console.log('Using existing session');
-                        return true;
-                    }
-                    throw new Error('No access token found in URL. Please use the link from your email.');
+                    // No token found - show helpful error
+                    console.error('No token found in URL');
+                    throw new Error('No access token found in URL. Please click the link from your password reset email directly.');
                 }
                 
-                // Verify it's a recovery token
-                if (tokenData.type !== 'recovery' && tokenData.type !== 'reset') {
-                    throw new Error('Invalid token type. Expected recovery token.');
+                // Verify it's a recovery token (but don't be too strict - some flows might not include type)
+                if (tokenData.type && tokenData.type !== 'recovery' && tokenData.type !== 'reset') {
+                    console.warn('Unexpected token type:', tokenData.type);
+                    // Don't throw - some flows might work without the type parameter
                 }
                 
                 // Set the session using the access token from the URL
+                console.log('Setting session with token...');
                 const { data, error } = await supabase.auth.setSession({
                     access_token: tokenData.accessToken,
                     refresh_token: tokenData.refreshToken || ''
@@ -469,6 +511,10 @@
                 
                 if (error) {
                     console.error('setSession error:', error);
+                    // If setSession fails, the token might be expired or invalid
+                    if (error.message && error.message.includes('expired')) {
+                        throw new Error('This password reset link has expired. Please request a new password reset.');
+                    }
                     throw error;
                 }
                 
@@ -476,12 +522,15 @@
                 const { data: { user }, error: userError } = await supabase.auth.getUser();
                 
                 if (userError || !user) {
+                    console.error('getUser error:', userError);
                     throw new Error('Failed to authenticate user');
                 }
                 
-                // Clear the hash from URL for security
+                console.log('User authenticated successfully:', user.email);
+                
+                // Clear the hash/query params from URL for security
                 if (window.history && window.history.replaceState) {
-                    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+                    window.history.replaceState(null, '', window.location.pathname);
                 }
                 
                 return true;
@@ -668,12 +717,21 @@
             
             document.getElementById('loading').classList.add('show');
             
+            // Wait a bit for Supabase to process the URL automatically
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
             const sessionInitialized = await initializeSession();
             
             document.getElementById('loading').classList.remove('show');
             
             if (sessionInitialized) {
                 document.getElementById('resetForm').style.display = 'block';
+            } else {
+                // Show helpful message
+                const statusEl = document.getElementById('status');
+                if (statusEl && !statusEl.classList.contains('show')) {
+                    showError('Unable to verify password reset link. Please make sure you clicked the link directly from your email, and that the link hasn\'t expired.');
+                }
             }
         });
     </script>
