@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<!--
+    Password Reset Page for Zeriah
+    
+    Configuration:
+    Before deploying, set these variables:
+    - window.SUPABASE_URL = 'https://your-project.supabase.co'
+    - window.SUPABASE_ANON_KEY = 'your-anon-key'
+    
+    For Netlify, you can inject these via environment variables at build time.
+    Alternatively, you can pass them as URL parameters: ?supabase_url=...&supabase_key=...
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reset Password - Zeriah</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        
+        .icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+            color: white;
+            font-size: 40px;
+        }
+        
+        h1 {
+            color: #1a1a1a;
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+        
+        .subtitle {
+            color: #666;
+            font-size: 16px;
+            margin-bottom: 32px;
+            line-height: 1.5;
+            text-align: center;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            color: #1a1a1a;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        
+        .input-wrapper {
+            position: relative;
+        }
+        
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            padding-right: 48px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+            font-family: inherit;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        input.error {
+            border-color: #dc3545;
+        }
+        
+        .toggle-password {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #666;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .toggle-password:hover {
+            color: #333;
+        }
+        
+        .error-message {
+            color: #dc3545;
+            font-size: 14px;
+            margin-top: 6px;
+            display: none;
+        }
+        
+        .error-message.show {
+            display: block;
+        }
+        
+        .password-requirements {
+            background: #f5f5f5;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 24px;
+            font-size: 13px;
+            color: #666;
+            line-height: 1.8;
+        }
+        
+        .password-requirements ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+        
+        .password-requirements li {
+            margin-bottom: 4px;
+        }
+        
+        .button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s, box-shadow 0.2s;
+            font-family: inherit;
+        }
+        
+        .button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+        
+        .button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .status.show {
+            display: block;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+            display: none;
+        }
+        
+        .spinner.show {
+            display: block;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .redirect-instructions {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 24px;
+            display: none;
+        }
+        
+        .redirect-instructions.show {
+            display: block;
+        }
+        
+        .redirect-instructions h3 {
+            color: #856404;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        
+        .redirect-instructions p {
+            color: #856404;
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }
+        
+        .redirect-instructions ol {
+            color: #856404;
+            font-size: 14px;
+            line-height: 1.8;
+            padding-left: 20px;
+            margin-bottom: 12px;
+        }
+        
+        .redirect-instructions button {
+            background: #856404;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+        
+        @media (max-width: 600px) {
+            .container {
+                padding: 24px;
+            }
+            
+            h1 {
+                font-size: 24px;
+            }
+            
+            .icon {
+                width: 60px;
+                height: 60px;
+                font-size: 30px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">🔐</div>
+        <h1>Reset Your Password</h1>
+        <p class="subtitle">Enter your new password below</p>
+        
+        <div id="loading" class="spinner"></div>
+        
+        <form id="resetForm" style="display: none;">
+            <div class="password-requirements">
+                <strong>Password Requirements:</strong>
+                <ul>
+                    <li>At least 8 characters long</li>
+                    <li>One uppercase letter</li>
+                    <li>One lowercase letter</li>
+                    <li>One number</li>
+                    <li>One special character (!@#$%^&*)</li>
+                </ul>
+            </div>
+            
+            <div class="form-group">
+                <label for="newPassword">New Password</label>
+                <div class="input-wrapper">
+                    <input 
+                        type="password" 
+                        id="newPassword" 
+                        name="newPassword" 
+                        required
+                        autocomplete="new-password"
+                    >
+                    <button type="button" class="toggle-password" onclick="togglePassword('newPassword', 'toggleNewPassword')">
+                        <span id="toggleNewPassword">👁️</span>
+                    </button>
+                </div>
+                <div class="error-message" id="newPasswordError"></div>
+            </div>
+            
+            <div class="form-group">
+                <label for="confirmPassword">Confirm Password</label>
+                <div class="input-wrapper">
+                    <input 
+                        type="password" 
+                        id="confirmPassword" 
+                        name="confirmPassword" 
+                        required
+                        autocomplete="new-password"
+                    >
+                    <button type="button" class="toggle-password" onclick="togglePassword('confirmPassword', 'toggleConfirmPassword')">
+                        <span id="toggleConfirmPassword">👁️</span>
+                    </button>
+                </div>
+                <div class="error-message" id="confirmPasswordError"></div>
+            </div>
+            
+            <button type="submit" class="button" id="submitButton">Reset Password</button>
+        </form>
+        
+        <div id="status" class="status"></div>
+        
+        <div id="redirectInstructions" class="redirect-instructions">
+            <h3>Password Reset Successful!</h3>
+            <p>Your password has been updated. You can now sign in to the Zeriah app with your new password.</p>
+            <ol>
+                <li>Open the Zeriah app on your device</li>
+                <li>Go to the login screen</li>
+                <li>Sign in with your email and new password</li>
+            </ol>
+            <button onclick="tryOpenApp()">Try Opening App</button>
+        </div>
+    </div>
+
+    <script>
+        // Supabase configuration
+        // These should be set when deploying to Netlify or your hosting service
+        // You can set them as environment variables or replace these values
+        const SUPABASE_URL = 'https://tkrzcavogrsyprqtdhcn.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRrcnpjYXZvZ3JzeXBycXRkaGNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk3NjU4MDMsImV4cCI6MjA3NTM0MTgwM30.7rlQslZj-U9EuX2iDhc3NShCPFIH4BCRyQT2BUqZ3c0';
+        
+        let supabase;
+        
+        function getSupabaseUrlFromConfig() {
+            // Try to get from URL params (if passed for testing)
+            const urlParams = new URLSearchParams(window.location.search);
+            const url = urlParams.get('supabase_url');
+            if (url) return url;
+            
+            // Try to extract from current URL if it's a Supabase redirect
+            const currentUrl = window.location.href;
+            const match = currentUrl.match(/https:\/\/([^.]+)\.supabase\.co/);
+            if (match) {
+                return `https://${match[1]}.supabase.co`;
+            }
+            
+            // Return empty - will show error
+            return '';
+        }
+        
+        function getSupabaseKeyFromConfig() {
+            // Try to get from URL params (if passed for testing)
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('supabase_key') || '';
+        }
+        
+        // Initialize Supabase client
+        if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+                auth: {
+                    autoRefreshToken: false,
+                    persistSession: false,
+                    detectSessionInUrl: true
+                }
+            });
+        } else {
+            showError('Supabase configuration missing. Please contact support.');
+            document.getElementById('resetForm').style.display = 'none';
+            document.getElementById('loading').classList.remove('show');
+        }
+        
+        // Handle Supabase session from recovery token
+        async function initializeSession() {
+            if (!supabase) {
+                return false;
+            }
+            
+            try {
+                // Supabase automatically handles the session when the user clicks the recovery link
+                // The token is in the URL hash, and Supabase will detect it
+                // Wait a moment for Supabase to process the URL
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Check if user is authenticated
+                const { data: { user }, error: userError } = await supabase.auth.getUser();
+                
+                if (userError) {
+                    // Try to get session from URL
+                    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+                    
+                    if (sessionError || !session) {
+                        throw new Error('No valid session found');
+                    }
+                }
+                
+                if (!user) {
+                    // Check session again
+                    const { data: { session } } = await supabase.auth.getSession();
+                    if (!session || !session.user) {
+                        throw new Error('User not authenticated');
+                    }
+                }
+                
+                return true;
+            } catch (error) {
+                console.error('Session initialization error:', error);
+                showError('Failed to verify reset token. The link may have expired. Please request a new password reset.');
+                return false;
+            }
+        }
+        
+        // Password validation (matches Flutter PasswordValidator)
+        function validatePassword(password) {
+            if (!password || password.length === 0) {
+                return 'Password is required';
+            }
+            
+            if (password.length < 8) {
+                return 'Password must be at least 8 characters long';
+            }
+            
+            if (!/[A-Z]/.test(password)) {
+                return 'Password must contain at least one uppercase letter';
+            }
+            
+            if (!/[a-z]/.test(password)) {
+                return 'Password must contain at least one lowercase letter';
+            }
+            
+            if (!/[0-9]/.test(password)) {
+                return 'Password must contain at least one number';
+            }
+            
+            if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+                return 'Password must contain at least one special character (!@#$%^&*)';
+            }
+            
+            return null;
+        }
+        
+        function togglePassword(inputId, toggleId) {
+            const input = document.getElementById(inputId);
+            const toggle = document.getElementById(toggleId);
+            
+            if (input.type === 'password') {
+                input.type = 'text';
+                toggle.textContent = '🙈';
+            } else {
+                input.type = 'password';
+                toggle.textContent = '👁️';
+            }
+        }
+        
+        function showError(message) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status error show';
+        }
+        
+        function showSuccess(message) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status success show';
+        }
+        
+        function clearErrors() {
+            document.getElementById('newPasswordError').textContent = '';
+            document.getElementById('newPasswordError').classList.remove('show');
+            document.getElementById('confirmPasswordError').textContent = '';
+            document.getElementById('confirmPasswordError').classList.remove('show');
+            document.getElementById('newPassword').classList.remove('error');
+            document.getElementById('confirmPassword').classList.remove('error');
+        }
+        
+        function setFieldError(fieldId, message) {
+            const field = document.getElementById(fieldId);
+            const errorEl = document.getElementById(fieldId + 'Error');
+            field.classList.add('error');
+            errorEl.textContent = message;
+            errorEl.classList.add('show');
+        }
+        
+        // Handle form submission
+        document.getElementById('resetForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            clearErrors();
+            document.getElementById('status').classList.remove('show');
+            
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            
+            // Validate passwords
+            const passwordError = validatePassword(newPassword);
+            if (passwordError) {
+                setFieldError('newPassword', passwordError);
+                return;
+            }
+            
+            if (newPassword !== confirmPassword) {
+                setFieldError('confirmPassword', 'Passwords do not match');
+                return;
+            }
+            
+            // Disable form
+            const submitButton = document.getElementById('submitButton');
+            submitButton.disabled = true;
+            submitButton.textContent = 'Resetting Password...';
+            document.getElementById('loading').classList.add('show');
+            
+            try {
+                // Get current user to ensure we're authenticated
+                const { data: { user }, error: userError } = await supabase.auth.getUser();
+                
+                if (userError || !user) {
+                    throw new Error('You must be authenticated to reset your password. Please use the link from your email.');
+                }
+                
+                // Update password
+                const { data, error } = await supabase.auth.updateUser({
+                    password: newPassword
+                });
+                
+                if (error) {
+                    throw error;
+                }
+                
+                // Sign out the user (they need to login with new password)
+                await supabase.auth.signOut();
+                
+                // Show success and redirect
+                document.getElementById('resetForm').style.display = 'none';
+                document.getElementById('loading').classList.remove('show');
+                showSuccess('Password reset successful! Redirecting to app...');
+                
+                // Try to redirect to app
+                setTimeout(() => {
+                    tryOpenApp();
+                }, 1500);
+                
+            } catch (error) {
+                console.error('Password reset error:', error);
+                document.getElementById('loading').classList.remove('show');
+                submitButton.disabled = false;
+                submitButton.textContent = 'Reset Password';
+                
+                let errorMessage = 'Failed to reset password. ';
+                if (error.message) {
+                    errorMessage += error.message;
+                } else {
+                    errorMessage += 'Please try again or request a new reset link.';
+                }
+                showError(errorMessage);
+            }
+        });
+        
+        function tryOpenApp() {
+            // Try to open the app via deep link
+            const deepLink = 'zeriah://login';
+            window.location.href = deepLink;
+            
+            // If we're still here after 2 seconds, show instructions
+            setTimeout(() => {
+                document.getElementById('redirectInstructions').classList.add('show');
+            }, 2000);
+        }
+        
+        // Initialize on page load
+        window.addEventListener('load', async () => {
+            if (!supabase) {
+                return;
+            }
+            
+            document.getElementById('loading').classList.add('show');
+            
+            const sessionInitialized = await initializeSession();
+            
+            document.getElementById('loading').classList.remove('show');
+            
+            if (sessionInitialized) {
+                document.getElementById('resetForm').style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
+
