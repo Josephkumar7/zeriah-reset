@@ -436,27 +436,35 @@
             // Try query parameters (some flows use query params)
             const queryParams = new URLSearchParams(window.location.search);
             
-            // Check hash first, then query params
-            const accessToken = hashParams?.get('access_token') || queryParams.get('access_token') || queryParams.get('token');
+            // Check hash first, then query params for access_token
+            const accessToken = hashParams?.get('access_token') || queryParams.get('access_token');
             const refreshToken = hashParams?.get('refresh_token') || queryParams.get('refresh_token');
             const type = hashParams?.get('type') || queryParams.get('type') || 'recovery';
+            
+            // Check for verification token (the token from email link before Supabase processes it)
+            const verificationToken = queryParams.get('token');
             
             // Also check for token in the full URL (Supabase might include it differently)
             if (!accessToken) {
                 const fullUrl = window.location.href;
-                const tokenMatch = fullUrl.match(/[?&#](?:access_token|token)=([^&]+)/);
+                const tokenMatch = fullUrl.match(/[?&#]access_token=([^&]+)/);
                 if (tokenMatch) {
                     return {
                         accessToken: decodeURIComponent(tokenMatch[1]),
                         refreshToken: refreshToken || '',
-                        type: type
+                        type: type,
+                        verificationToken: null
                     };
                 }
             }
             
-            if (!accessToken) return null;
-            
-            return { accessToken, refreshToken, type };
+            // Return both access token (if found) and verification token (if found)
+            return {
+                accessToken: accessToken || null,
+                refreshToken: refreshToken || null,
+                type: type,
+                verificationToken: verificationToken || null
+            };
         }
         
         // Handle Supabase session from recovery token
@@ -485,37 +493,55 @@
                 
                 console.log('Token data extracted:', { 
                     hasAccessToken: !!tokenData?.accessToken, 
+                    hasVerificationToken: !!tokenData?.verificationToken,
                     type: tokenData?.type,
                     urlHash: window.location.hash,
                     urlSearch: window.location.search
                 });
                 
-                if (!tokenData || !tokenData.accessToken) {
-                    // No token found - show helpful error
-                    console.error('No token found in URL');
-                    throw new Error('No access token found in URL. Please click the link from your password reset email directly.');
+                // If we have a verification token but no access token, we need to complete the verification
+                // The token from email should have been processed by Supabase's /auth/v1/verify endpoint
+                // If we're here with a token but no access_token, Supabase didn't redirect properly
+                if (tokenData.verificationToken && !tokenData.accessToken) {
+                    console.log('Found verification token but no access_token - Supabase verify endpoint should have redirected');
+                    console.log('Redirecting to Supabase verify endpoint to complete verification...');
+                    
+                    // Redirect to Supabase's verify endpoint, which should then redirect back with access_token
+                    const currentUrl = window.location.origin + window.location.pathname;
+                    const verifyUrl = `${SUPABASE_URL}/auth/v1/verify?token=${encodeURIComponent(tokenData.verificationToken)}&type=recovery&redirect_to=${encodeURIComponent(currentUrl)}`;
+                    
+                    // Redirect to Supabase's verify endpoint
+                    window.location.href = verifyUrl;
+                    return false; // Will redirect, so return false
                 }
                 
-                // Verify it's a recovery token (but don't be too strict - some flows might not include type)
-                if (tokenData.type && tokenData.type !== 'recovery' && tokenData.type !== 'reset') {
-                    console.warn('Unexpected token type:', tokenData.type);
-                    // Don't throw - some flows might work without the type parameter
-                }
-                
-                // Set the session using the access token from the URL
-                console.log('Setting session with token...');
-                const { data, error } = await supabase.auth.setSession({
-                    access_token: tokenData.accessToken,
-                    refresh_token: tokenData.refreshToken || ''
-                });
-                
-                if (error) {
-                    console.error('setSession error:', error);
-                    // If setSession fails, the token might be expired or invalid
-                    if (error.message && error.message.includes('expired')) {
-                        throw new Error('This password reset link has expired. Please request a new password reset.');
+                // If we have an access token, use it to set the session
+                if (tokenData.accessToken) {
+                    // Verify it's a recovery token (but don't be too strict - some flows might not include type)
+                    if (tokenData.type && tokenData.type !== 'recovery' && tokenData.type !== 'reset') {
+                        console.warn('Unexpected token type:', tokenData.type);
+                        // Don't throw - some flows might work without the type parameter
                     }
-                    throw error;
+                    
+                    // Set the session using the access token from the URL
+                    console.log('Setting session with access token...');
+                    const { data, error } = await supabase.auth.setSession({
+                        access_token: tokenData.accessToken,
+                        refresh_token: tokenData.refreshToken || ''
+                    });
+                    
+                    if (error) {
+                        console.error('setSession error:', error);
+                        // If setSession fails, the token might be expired or invalid
+                        if (error.message && error.message.includes('expired')) {
+                            throw new Error('This password reset link has expired. Please request a new password reset.');
+                        }
+                        throw error;
+                    }
+                } else if (!tokenData.verificationToken) {
+                    // No token found at all - show helpful error
+                    console.error('No token found in URL');
+                    throw new Error('No reset token found in URL. Please click the link from your password reset email directly.');
                 }
                 
                 // Verify user is authenticated
@@ -709,11 +735,34 @@
             }, 2000);
         }
         
+        // Check if we need to redirect to Supabase's verify endpoint
+        function checkForVerificationRedirect() {
+            const queryParams = new URLSearchParams(window.location.search);
+            const token = queryParams.get('token');
+            const type = queryParams.get('type');
+            
+            // If we have a verification token in query params but no access_token in hash,
+            // we might need to let Supabase's verify endpoint handle it
+            // However, if the user clicked the email link, Supabase should have already redirected
+            // So if we're here with a token, it means Supabase didn't redirect properly
+            // In that case, we'll try to verify it directly
+            if (token && type === 'recovery' && !window.location.hash.includes('access_token')) {
+                console.log('Found verification token but no access_token - Supabase may not have redirected properly');
+                // Don't auto-redirect - let the verification code handle it
+                return false;
+            }
+            
+            return false;
+        }
+        
         // Initialize on page load
         window.addEventListener('load', async () => {
             if (!supabase) {
                 return;
             }
+            
+            // Check if we need to handle verification redirect
+            checkForVerificationRedirect();
             
             document.getElementById('loading').classList.add('show');
             
