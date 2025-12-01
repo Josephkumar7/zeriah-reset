@@ -363,465 +363,189 @@
         </div>
     </div>
 
-    <script>
-        // Supabase configuration
-        // These should be set when deploying to Netlify or your hosting service
-        // You can set them as environment variables or replace these values
-        const SUPABASE_URL = 'https://tkrzcavogrsyprqtdhcn.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRrcnpjYXZvZ3JzeXBycXRkaGNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk3NjU4MDMsImV4cCI6MjA3NTM0MTgwM30.7rlQslZj-U9EuX2iDhc3NShCPFIH4BCRyQT2BUqZ3c0';
-        
-        let supabase;
-        
-        function getSupabaseUrlFromConfig() {
-            // Try to get from URL params (if passed for testing)
-            const urlParams = new URLSearchParams(window.location.search);
-            const url = urlParams.get('supabase_url');
-            if (url) return url;
-            
-            // Try to extract from current URL if it's a Supabase redirect
-            const currentUrl = window.location.href;
-            const match = currentUrl.match(/https:\/\/([^.]+)\.supabase\.co/);
-            if (match) {
-                return `https://${match[1]}.supabase.co`;
-            }
-            
-            // Return empty - will show error
-            return '';
-        }
-        
-        function getSupabaseKeyFromConfig() {
-            // Try to get from URL params (if passed for testing)
-            const urlParams = new URLSearchParams(window.location.search);
-            return urlParams.get('supabase_key') || '';
-        }
-        
-        // Initialize Supabase client
-        if (SUPABASE_URL && SUPABASE_ANON_KEY) {
-            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-                auth: {
-                    autoRefreshToken: false,
-                    persistSession: true, // Changed to true to allow session persistence
-                    detectSessionInUrl: true,
-                    flowType: 'pkce',
-                    storage: window.localStorage // Use localStorage for session
-                }
-            });
-            
-            // Log for debugging
-            console.log('Supabase client initialized');
-            console.log('Current URL:', window.location.href);
-            console.log('URL Hash:', window.location.hash);
-            console.log('URL Search:', window.location.search);
-            
-            // Listen for auth state changes (Supabase might auto-authenticate)
-            supabase.auth.onAuthStateChange((event, session) => {
-                console.log('Auth state changed:', event, session?.user?.email);
-                if (event === 'SIGNED_IN' && session) {
-                    // User was automatically signed in
-                    console.log('User auto-signed in via recovery token');
-                }
-            });
-        } else {
-            showError('Supabase configuration missing. Please contact support.');
-            document.getElementById('resetForm').style.display = 'none';
-            document.getElementById('loading').classList.remove('show');
-        }
-        
-        // Extract token from URL (both hash and query parameters)
-        function extractTokenFromUrl() {
-            // Try hash first (Supabase typically uses hash for OAuth flows)
-            const hash = window.location.hash.substring(1);
-            const hashParams = hash ? new URLSearchParams(hash) : null;
-            
-            // Try query parameters (some flows use query params)
-            const queryParams = new URLSearchParams(window.location.search);
-            
-            // Check hash first, then query params for access_token
-            const accessToken = hashParams?.get('access_token') || queryParams.get('access_token');
-            const refreshToken = hashParams?.get('refresh_token') || queryParams.get('refresh_token');
-            const type = hashParams?.get('type') || queryParams.get('type') || 'recovery';
-            
-            // Check for PKCE code (Supabase uses this in PKCE flow)
-            const code = queryParams.get('code');
-            
-            // Check for verification token (the token from email link before Supabase processes it)
-            const verificationToken = queryParams.get('token');
-            
-            // Also check for token in the full URL (Supabase might include it differently)
-            if (!accessToken) {
-                const fullUrl = window.location.href;
-                const tokenMatch = fullUrl.match(/[?&#]access_token=([^&]+)/);
-                if (tokenMatch) {
-                    return {
-                        accessToken: decodeURIComponent(tokenMatch[1]),
-                        refreshToken: refreshToken || '',
-                        type: type,
-                        verificationToken: null,
-                        code: null
-                    };
-                }
-            }
-            
-            // Return all possible tokens
-            return {
-                accessToken: accessToken || null,
-                refreshToken: refreshToken || null,
-                type: type,
-                verificationToken: verificationToken || null,
-                code: code || null
-            };
-        }
-        
-        // Handle Supabase session from recovery token
-        async function initializeSession() {
-            if (!supabase) {
-                return false;
-            }
-            
-            try {
-                // Log current URL for debugging
-                console.log('Current URL:', window.location.href);
-                console.log('URL Hash:', window.location.hash);
-                console.log('URL Search:', window.location.search);
-                
-                // First, let Supabase try to detect the session automatically
-                // This handles the case where Supabase has already processed the URL
-                const { data: { session: autoSession }, error: autoSessionError } = await supabase.auth.getSession();
-                
-                if (autoSession && autoSession.user) {
-                    console.log('Session auto-detected by Supabase');
-                    return true;
-                }
-                
-                // If no auto session, try to extract token manually
-                const tokenData = extractTokenFromUrl();
-                
-                console.log('Token data extracted:', { 
-                    hasAccessToken: !!tokenData?.accessToken, 
-                    hasVerificationToken: !!tokenData?.verificationToken,
-                    hasCode: !!tokenData?.code,
-                    type: tokenData?.type,
-                    urlHash: window.location.hash,
-                    urlSearch: window.location.search
-                });
-                
-                // If we have a PKCE code, exchange it for a session
-                if (tokenData.code && !tokenData.accessToken) {
-                    console.log('Found PKCE code, exchanging for session...');
-                    try {
-                        // Exchange the code for a session
-                        // Supabase v2 uses exchangeCodeForSession for PKCE flow
-                        const { data, error } = await supabase.auth.exchangeCodeForSession(tokenData.code);
-                        
-                        if (error) {
-                            console.error('exchangeCodeForSession error:', error);
-                            throw error;
-                        }
-                        
-                        if (data.session && data.user) {
-                            console.log('Code exchanged successfully, user authenticated');
-                            // Clear the code from URL
-                            if (window.history && window.history.replaceState) {
-                                const newUrl = new URL(window.location.href);
-                                newUrl.searchParams.delete('code');
-                                window.history.replaceState(null, '', newUrl.pathname + newUrl.search);
-                            }
-                            return true;
-                        }
-                    } catch (codeError) {
-                        console.error('Error exchanging code:', codeError);
-                        if (codeError.message && codeError.message.includes('expired')) {
-                            throw new Error('This password reset link has expired. Please request a new password reset.');
-                        }
-                        throw new Error('Failed to verify reset code. Please request a new password reset.');
-                    }
-                }
-                
-                // If we have a verification token but no access token, we need to complete the verification
-                // The token from email should have been processed by Supabase's /auth/v1/verify endpoint
-                // If we're here with a token but no access_token, Supabase didn't redirect properly
-                if (tokenData.verificationToken && !tokenData.accessToken && !tokenData.code) {
-                    console.log('Found verification token but no access_token - Supabase verify endpoint should have redirected');
-                    console.log('Redirecting to Supabase verify endpoint to complete verification...');
-                    
-                    // Redirect to Supabase's verify endpoint, which should then redirect back with access_token
-                    const currentUrl = window.location.origin + window.location.pathname;
-                    const verifyUrl = `${SUPABASE_URL}/auth/v1/verify?token=${encodeURIComponent(tokenData.verificationToken)}&type=recovery&redirect_to=${encodeURIComponent(currentUrl)}`;
-                    
-                    // Redirect to Supabase's verify endpoint
-                    window.location.href = verifyUrl;
-                    return false; // Will redirect, so return false
-                }
-                
-                // If we have an access token, use it to set the session
-                if (tokenData.accessToken) {
-                    // Verify it's a recovery token (but don't be too strict - some flows might not include type)
-                    if (tokenData.type && tokenData.type !== 'recovery' && tokenData.type !== 'reset') {
-                        console.warn('Unexpected token type:', tokenData.type);
-                        // Don't throw - some flows might work without the type parameter
-                    }
-                    
-                    // Set the session using the access token from the URL
-                    console.log('Setting session with access token...');
-                    const { data, error } = await supabase.auth.setSession({
-                        access_token: tokenData.accessToken,
-                        refresh_token: tokenData.refreshToken || ''
-                    });
-                    
-                    if (error) {
-                        console.error('setSession error:', error);
-                        // If setSession fails, the token might be expired or invalid
-                        if (error.message && error.message.includes('expired')) {
-                            throw new Error('This password reset link has expired. Please request a new password reset.');
-                        }
-                        throw error;
-                    }
-                } else if (!tokenData.verificationToken && !tokenData.code) {
-                    // No token found at all - show helpful error
-                    console.error('No token found in URL');
-                    throw new Error('No reset token found in URL. Please click the link from your password reset email directly.');
-                }
-                
-                // Verify user is authenticated
-                const { data: { user }, error: userError } = await supabase.auth.getUser();
-                
-                if (userError || !user) {
-                    console.error('getUser error:', userError);
-                    throw new Error('Failed to authenticate user');
-                }
-                
-                console.log('User authenticated successfully:', user.email);
-                
-                // Clear the hash/query params from URL for security
-                if (window.history && window.history.replaceState) {
-                    window.history.replaceState(null, '', window.location.pathname);
-                }
-                
-                return true;
-            } catch (error) {
-                console.error('Session initialization error:', error);
-                let errorMessage = 'Failed to verify reset token. ';
-                
-                if (error.message) {
-                    if (error.message.includes('expired') || error.message.includes('invalid')) {
-                        errorMessage += 'The link may have expired. Please request a new password reset.';
-                    } else {
-                        errorMessage += error.message;
-                    }
-                } else {
-                    errorMessage += 'Please request a new password reset.';
-                }
-                
-                showError(errorMessage);
-                return false;
-            }
-        }
-        
-        // Password validation (matches Flutter PasswordValidator)
-        function validatePassword(password) {
-            if (!password || password.length === 0) {
-                return 'Password is required';
-            }
-            
-            if (password.length < 8) {
-                return 'Password must be at least 8 characters long';
-            }
-            
-            if (!/[A-Z]/.test(password)) {
-                return 'Password must contain at least one uppercase letter';
-            }
-            
-            if (!/[a-z]/.test(password)) {
-                return 'Password must contain at least one lowercase letter';
-            }
-            
-            if (!/[0-9]/.test(password)) {
-                return 'Password must contain at least one number';
-            }
-            
-            if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
-                return 'Password must contain at least one special character (!@#$%^&*)';
-            }
-            
-            return null;
-        }
-        
-        function togglePassword(inputId, toggleId) {
-            const input = document.getElementById(inputId);
-            const toggle = document.getElementById(toggleId);
-            
-            if (input.type === 'password') {
-                input.type = 'text';
-                toggle.textContent = '🙈';
-            } else {
-                input.type = 'password';
-                toggle.textContent = '👁️';
-            }
-        }
-        
-        function showError(message) {
-            const status = document.getElementById('status');
-            status.textContent = message;
-            status.className = 'status error show';
-        }
-        
-        function showSuccess(message) {
-            const status = document.getElementById('status');
-            status.textContent = message;
-            status.className = 'status success show';
-        }
-        
-        function clearErrors() {
-            document.getElementById('newPasswordError').textContent = '';
-            document.getElementById('newPasswordError').classList.remove('show');
-            document.getElementById('confirmPasswordError').textContent = '';
-            document.getElementById('confirmPasswordError').classList.remove('show');
-            document.getElementById('newPassword').classList.remove('error');
-            document.getElementById('confirmPassword').classList.remove('error');
-        }
-        
-        function setFieldError(fieldId, message) {
-            const field = document.getElementById(fieldId);
-            const errorEl = document.getElementById(fieldId + 'Error');
-            field.classList.add('error');
-            errorEl.textContent = message;
-            errorEl.classList.add('show');
-        }
-        
-        // Handle form submission
-        document.getElementById('resetForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            clearErrors();
-            document.getElementById('status').classList.remove('show');
-            
-            const newPassword = document.getElementById('newPassword').value;
-            const confirmPassword = document.getElementById('confirmPassword').value;
-            
-            // Validate passwords
-            const passwordError = validatePassword(newPassword);
-            if (passwordError) {
-                setFieldError('newPassword', passwordError);
-                return;
-            }
-            
-            if (newPassword !== confirmPassword) {
-                setFieldError('confirmPassword', 'Passwords do not match');
-                return;
-            }
-            
-            // Disable form
-            const submitButton = document.getElementById('submitButton');
-            submitButton.disabled = true;
-            submitButton.textContent = 'Resetting Password...';
-            document.getElementById('loading').classList.add('show');
-            
-            try {
-                // Get current user to ensure we're authenticated
-                const { data: { user }, error: userError } = await supabase.auth.getUser();
-                
-                if (userError || !user) {
-                    throw new Error('You must be authenticated to reset your password. Please use the link from your email.');
-                }
-                
-                // Update password
-                const { data, error } = await supabase.auth.updateUser({
-                    password: newPassword
-                });
-                
-                if (error) {
-                    throw error;
-                }
-                
-                // Sign out the user (they need to login with new password)
-                await supabase.auth.signOut();
-                
-                // Show success and redirect
-                document.getElementById('resetForm').style.display = 'none';
-                document.getElementById('loading').classList.remove('show');
-                showSuccess('Password reset successful! Redirecting to app...');
-                
-                // Try to redirect to app
-                setTimeout(() => {
-                    tryOpenApp();
-                }, 1500);
-                
-            } catch (error) {
-                console.error('Password reset error:', error);
-                document.getElementById('loading').classList.remove('show');
-                submitButton.disabled = false;
-                submitButton.textContent = 'Reset Password';
-                
-                let errorMessage = 'Failed to reset password. ';
-                if (error.message) {
-                    errorMessage += error.message;
-                } else {
-                    errorMessage += 'Please try again or request a new reset link.';
-                }
-                showError(errorMessage);
-            }
-        });
-        
-        function tryOpenApp() {
-            // Try to open the app via deep link
-            const deepLink = 'zeriah://login';
-            window.location.href = deepLink;
-            
-            // If we're still here after 2 seconds, show instructions
-            setTimeout(() => {
-                document.getElementById('redirectInstructions').classList.add('show');
-            }, 2000);
-        }
-        
-        // Check if we need to redirect to Supabase's verify endpoint
-        function checkForVerificationRedirect() {
-            const queryParams = new URLSearchParams(window.location.search);
-            const token = queryParams.get('token');
-            const type = queryParams.get('type');
-            
-            // If we have a verification token in query params but no access_token in hash,
-            // we might need to let Supabase's verify endpoint handle it
-            // However, if the user clicked the email link, Supabase should have already redirected
-            // So if we're here with a token, it means Supabase didn't redirect properly
-            // In that case, we'll try to verify it directly
-            if (token && type === 'recovery' && !window.location.hash.includes('access_token')) {
-                console.log('Found verification token but no access_token - Supabase may not have redirected properly');
-                // Don't auto-redirect - let the verification code handle it
-                return false;
-            }
-            
-            return false;
-        }
-        
-        // Initialize on page load
-        window.addEventListener('load', async () => {
-            if (!supabase) {
-                return;
-            }
-            
-            // Check if we need to handle verification redirect
-            checkForVerificationRedirect();
-            
-            document.getElementById('loading').classList.add('show');
-            
-            // Wait a bit for Supabase to process the URL automatically
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            const sessionInitialized = await initializeSession();
-            
-            document.getElementById('loading').classList.remove('show');
-            
-            if (sessionInitialized) {
-                document.getElementById('resetForm').style.display = 'block';
-            } else {
-                // Show helpful message
-                const statusEl = document.getElementById('status');
-                if (statusEl && !statusEl.classList.contains('show')) {
-                    showError('Unable to verify password reset link. Please make sure you clicked the link directly from your email, and that the link hasn\'t expired.');
-                }
-            }
-        });
-    </script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // --- 1. Supabase config (keep your values here) ---
+  const SUPABASE_URL = 'https://tkrzcavogrsyprqtdhcn.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRrcnpjYXZvZ3JzeXBycXRkaGNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk3NjU4MDMsImV4cCI6MjA3NTM0MTgwM30.7rlQslZj-U9EuX2iDhc3NShCPFIH4BCRyQT2BUqZ3c0';
+
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true,     // let supabase-js read #access_token from URL
+      flowType: 'implicit',         // we DON'T need PKCE for password reset
+      storage: window.localStorage
+    }
+  });
+
+  // --- 2. UI helpers (unchanged) ---
+  function togglePassword(inputId, toggleId) {
+    const input = document.getElementById(inputId);
+    const toggle = document.getElementById(toggleId);
+
+    if (input.type === 'password') {
+      input.type = 'text';
+      toggle.textContent = '🙈';
+    } else {
+      input.type = 'password';
+      toggle.textContent = '👁️';
+    }
+  }
+
+  function showError(message) {
+    const status = document.getElementById('status');
+    status.textContent = message;
+    status.className = 'status error show';
+  }
+
+  function showSuccess(message) {
+    const status = document.getElementById('status');
+    status.textContent = message;
+    status.className = 'status success show';
+  }
+
+  function clearErrors() {
+    document.getElementById('newPasswordError').textContent = '';
+    document.getElementById('newPasswordError').classList.remove('show');
+    document.getElementById('confirmPasswordError').textContent = '';
+    document.getElementById('confirmPasswordError').classList.remove('show');
+    document.getElementById('newPassword').classList.remove('error');
+    document.getElementById('confirmPassword').classList.remove('error');
+  }
+
+  function setFieldError(fieldId, message) {
+    const field = document.getElementById(fieldId);
+    const errorEl = document.getElementById(fieldId + 'Error');
+    field.classList.add('error');
+    errorEl.textContent = message;
+    errorEl.classList.add('show');
+  }
+
+  // --- 3. Password validation (same logic) ---
+  function validatePassword(password) {
+    if (!password || password.length === 0) {
+      return 'Password is required';
+    }
+    if (password.length < 8) {
+      return 'Password must be at least 8 characters long';
+    }
+    if (!/[A-Z]/.test(password)) {
+      return 'Password must contain at least one uppercase letter';
+    }
+    if (!/[a-z]/.test(password)) {
+      return 'Password must contain at least one lowercase letter';
+    }
+    if (!/[0-9]/.test(password)) {
+      return 'Password must contain at least one number';
+    }
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+      return 'Password must contain at least one special character (!@#$%^&*)';
+    }
+    return null;
+  }
+
+  function tryOpenApp() {
+    const deepLink = 'zeriah://login';
+    window.location.href = deepLink;
+
+    setTimeout(() => {
+      document.getElementById('redirectInstructions').classList.add('show');
+    }, 2000);
+  }
+
+  // --- 4. On load: verify session from reset link ---
+  window.addEventListener('load', async () => {
+    const loading = document.getElementById('loading');
+    const form = document.getElementById('resetForm');
+
+    loading.classList.add('show');
+
+    try {
+      // This will ALSO cause supabase-js to parse #access_token from URL
+      const { data: { session }, error } = await supabase.auth.getSession();
+
+      loading.classList.remove('show');
+
+      if (error) {
+        console.error('getSession error:', error);
+        showError('Failed to verify reset link. Please request a new password reset.');
+        return;
+      }
+
+      if (!session || !session.user) {
+        console.warn('No session from reset link');
+        showError('This password reset link is invalid or has expired. Please request a new reset email.');
+        return;
+      }
+
+      console.log('Password reset session for:', session.user.email);
+      form.style.display = 'block';
+    } catch (err) {
+      console.error('Session init error:', err);
+      loading.classList.remove('show');
+      showError('Failed to verify reset link. Please request a new password reset.');
+    }
+  });
+
+  // --- 5. Handle form submit (same idea, cleaner) ---
+  document.getElementById('resetForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    clearErrors();
+    document.getElementById('status').classList.remove('show');
+
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmPassword = document.getElementById('confirmPassword').value;
+
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      setFieldError('newPassword', passwordError);
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setFieldError('confirmPassword', 'Passwords do not match');
+      return;
+    }
+
+    const submitButton = document.getElementById('submitButton');
+    submitButton.disabled = true;
+    submitButton.textContent = 'Resetting Password...';
+    document.getElementById('loading').classList.add('show');
+
+    try {
+      // Double-check we still have a user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw new Error('Password reset session is no longer valid. Please request a new reset email.');
+      }
+
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+      if (error) throw error;
+
+      await supabase.auth.signOut();
+
+      document.getElementById('resetForm').style.display = 'none';
+      document.getElementById('loading').classList.remove('show');
+      showSuccess('Password reset successful! Redirecting to app...');
+      setTimeout(() => {
+        tryOpenApp();
+      }, 1500);
+    } catch (error) {
+      console.error('Password reset error:', error);
+      document.getElementById('loading').classList.remove('show');
+      submitButton.disabled = false;
+      submitButton.textContent = 'Reset Password';
+
+      let msg = 'Failed to reset password. ';
+      msg += error?.message || 'Please try again or request a new reset link.';
+      showError(msg);
+    }
+  });
+</script>
 </body>
 </html>
+
 
