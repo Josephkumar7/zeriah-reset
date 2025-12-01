@@ -401,13 +401,32 @@
                 auth: {
                     autoRefreshToken: false,
                     persistSession: false,
-                    detectSessionInUrl: true
+                    detectSessionInUrl: true,
+                    flowType: 'pkce'
                 }
             });
+            
+            // Log for debugging
+            console.log('Supabase client initialized');
+            console.log('Current URL:', window.location.href);
+            console.log('URL Hash:', window.location.hash);
         } else {
             showError('Supabase configuration missing. Please contact support.');
             document.getElementById('resetForm').style.display = 'none';
             document.getElementById('loading').classList.remove('show');
+        }
+        
+        // Extract token from URL hash
+        function extractTokenFromHash() {
+            const hash = window.location.hash.substring(1);
+            if (!hash) return null;
+            
+            const params = new URLSearchParams(hash);
+            const accessToken = params.get('access_token');
+            const refreshToken = params.get('refresh_token');
+            const type = params.get('type');
+            
+            return { accessToken, refreshToken, type };
         }
         
         // Handle Supabase session from recovery token
@@ -417,35 +436,70 @@
             }
             
             try {
-                // Supabase automatically handles the session when the user clicks the recovery link
-                // The token is in the URL hash, and Supabase will detect it
-                // Wait a moment for Supabase to process the URL
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // Extract token from URL hash (Supabase includes it when redirecting)
+                const tokenData = extractTokenFromHash();
                 
-                // Check if user is authenticated
-                const { data: { user }, error: userError } = await supabase.auth.getUser();
+                console.log('Token data extracted:', { 
+                    hasAccessToken: !!tokenData?.accessToken, 
+                    type: tokenData?.type 
+                });
                 
-                if (userError) {
-                    // Try to get session from URL
+                if (!tokenData || !tokenData.accessToken) {
+                    // Try to get existing session (might already be set)
                     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+                    console.log('Existing session check:', { hasSession: !!session, error: sessionError });
                     
-                    if (sessionError || !session) {
-                        throw new Error('No valid session found');
+                    if (session && session.user) {
+                        console.log('Using existing session');
+                        return true;
                     }
+                    throw new Error('No access token found in URL. Please use the link from your email.');
                 }
                 
-                if (!user) {
-                    // Check session again
-                    const { data: { session } } = await supabase.auth.getSession();
-                    if (!session || !session.user) {
-                        throw new Error('User not authenticated');
-                    }
+                // Verify it's a recovery token
+                if (tokenData.type !== 'recovery' && tokenData.type !== 'reset') {
+                    throw new Error('Invalid token type. Expected recovery token.');
+                }
+                
+                // Set the session using the access token from the URL
+                const { data, error } = await supabase.auth.setSession({
+                    access_token: tokenData.accessToken,
+                    refresh_token: tokenData.refreshToken || ''
+                });
+                
+                if (error) {
+                    console.error('setSession error:', error);
+                    throw error;
+                }
+                
+                // Verify user is authenticated
+                const { data: { user }, error: userError } = await supabase.auth.getUser();
+                
+                if (userError || !user) {
+                    throw new Error('Failed to authenticate user');
+                }
+                
+                // Clear the hash from URL for security
+                if (window.history && window.history.replaceState) {
+                    window.history.replaceState(null, '', window.location.pathname + window.location.search);
                 }
                 
                 return true;
             } catch (error) {
                 console.error('Session initialization error:', error);
-                showError('Failed to verify reset token. The link may have expired. Please request a new password reset.');
+                let errorMessage = 'Failed to verify reset token. ';
+                
+                if (error.message) {
+                    if (error.message.includes('expired') || error.message.includes('invalid')) {
+                        errorMessage += 'The link may have expired. Please request a new password reset.';
+                    } else {
+                        errorMessage += error.message;
+                    }
+                } else {
+                    errorMessage += 'Please request a new password reset.';
+                }
+                
+                showError(errorMessage);
                 return false;
             }
         }
